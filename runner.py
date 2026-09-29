@@ -28,6 +28,7 @@ from modules.psa.m14_expenses import ExpensesModule
 from modules.psa.m15_gantt import GanttChartModule
 from modules.psa.m16_invoice import InvoiceCreationModule
 from modules.psa.m17_payment import PaymentModule
+from modules.psa.m18_budget import BudgetModule
 
 
 class SafeAutonomousEngine:
@@ -45,6 +46,7 @@ class SafeAutonomousEngine:
             ContractCreationModule(),
             ProjectCreationModule(),
             ProjectOverviewModule(),
+            BudgetModule(),
             MilestonesModule(),
             TasksModule(),
             TaskBoardModule(),
