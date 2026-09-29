@@ -5,3 +5,9 @@ auth_state.json
 evidence_output/
 *.bak
 *.webm
+# Ignore generated evidence
+evidence/*
+
+# But keep the source files
+!evidence/__init__.py
+!evidence/collector.py
