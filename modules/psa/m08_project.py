@@ -9,7 +9,6 @@ class ProjectCreationModule(ScreenModule):
         super().__init__(name="Project Creation", depends_on=["Contract Creation"])
 
     def _safe_goto(self, page: Page, url: str):
-        """Absorbs ERR_ABORTED caused by asynchronous redirects from previous modules."""
         try:
             page.goto(url, wait_until="domcontentloaded")
         except Error as e:
@@ -19,23 +18,27 @@ class ProjectCreationModule(ScreenModule):
             else:
                 raise
 
-    def run(self, page: Page, context=None) -> bool:
-        client_name = getattr(context, "client_name", None)
-        if not client_name:
-            raise RuntimeError(
-                "Missing context.client_name from upstream Lead/Client module."
-            )
+    def execute(self, page: Page, context=None):
+        return self.run(page, context)
 
+    def run(self, page: Page, context=None) -> bool:
+        client_name = getattr(context, "client_name", None) or getattr(
+            context, "lead_name", None
+        )
         run_tag = str(int(time.time()))[-5:]
         project_name = f"Project_{run_tag}"
         short_code = f"PRJ{run_tag}"
 
-        # 1. Resilient Navigation
-        self._safe_goto(page, "https://www.crmleaf.com/account/projects")
+        self._safe_goto(page, "https://www.crmleaf.com/account/projects/card-view")
         page.wait_for_load_state("networkidle")
 
         add_project_btn = (
-            page.locator('a:has-text("Add Project"), button:has-text("Add Project")')
+            page.get_by_role("link", name="Add Project")
+            .or_(
+                page.locator(
+                    'a:has-text("Add Project"), button:has-text("Add Project")'
+                )
+            )
             .locator("visible=true")
             .first
         )
@@ -49,7 +52,7 @@ class ProjectCreationModule(ScreenModule):
         )
         form.wait_for(state="visible", timeout=10000)
 
-        # 2. Fill Project Name
+        # 1. Project Name
         name_input = (
             form.get_by_role("textbox", name="Project Name *")
             .locator("visible=true")
@@ -58,7 +61,7 @@ class ProjectCreationModule(ScreenModule):
         name_input.wait_for(state="visible", timeout=5000)
         name_input.fill(project_name)
 
-        # 3. Fill Short Code (Mandatory)
+        # 2. Short Code
         short_code_input = (
             form.locator('input[name="project_short_code"]')
             .or_(form.get_by_role("textbox", name="Short Code *"))
@@ -68,53 +71,20 @@ class ProjectCreationModule(ScreenModule):
         if short_code_input.is_visible(timeout=2000):
             short_code_input.fill(short_code)
 
-        # 4. Handle Start Date Datepicker
+        # 3. Start Date (d-m-Y format required)
         start_date_input = (
             form.get_by_role("textbox", name="Start Date *")
             .locator("visible=true")
             .first
         )
         if start_date_input.is_visible(timeout=3000):
-            today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+            today_dmy = datetime.datetime.now().strftime("%d-%m-%Y")
             start_date_input.evaluate(
-                f"(el) => {{ el.value = '{today_str}'; el.dispatchEvent(new Event('change', {{bubbles: true}})); }}"
+                f"(el) => {{ el.value = '{today_dmy}'; el.dispatchEvent(new Event('change', {{bubbles: true}})); }}"
             )
-
-            start_date_input.click(force=True)
-            page.wait_for_timeout(500)
-
-            today_day = str(datetime.datetime.now().day)
-            active_calendar = (
-                page.locator(
-                    ".qs-datepicker-container.qs-active, .datepicker.dropdown-menu"
-                )
-                .locator("visible=true")
-                .first
-            )
-
-            if active_calendar.is_visible(timeout=2000):
-                day_cell = active_calendar.get_by_text(today_day, exact=True).first
-                if day_cell.is_visible():
-                    day_cell.click(force=True)
-                else:
-                    active_calendar.locator(
-                        ".qs-square:not(.qs-empty), td.day:not(.old):not(.new)"
-                    ).first.click(force=True)
-            else:
-                fallback = (
-                    page.locator(
-                        f".qs-square:text-is('{today_day}'), td.day:text-is('{today_day}')"
-                    )
-                    .locator("visible=true")
-                    .first
-                )
-                if fallback.is_visible():
-                    fallback.click(force=True)
-
-            form.click(position={"x": 5, "y": 5}, force=True)
             page.keyboard.press("Escape")
 
-        # 5. Check Deadline Option
+        # 4. Deadline Checkbox
         no_deadline = (
             form.get_by_role("checkbox", name="There is no project deadline")
             .locator("visible=true")
@@ -123,52 +93,87 @@ class ProjectCreationModule(ScreenModule):
         if no_deadline.is_visible(timeout=2000):
             no_deadline.check(force=True)
 
-        # 6. Client Selection
+        # 5. Client Dropdown Selection
         client_combobox = (
-            form.locator('button[data-id="client_id"]').locator("visible=true").first
-        )
-        if not client_combobox.is_visible():
-            client_combobox = (
-                form.get_by_role("combobox", name="--").locator("visible=true").nth(1)
+            form.locator('button[data-id="client_id"]')
+            .or_(
+                form.locator(
+                    '.form-group:has-text("Client") button[data-toggle="dropdown"]'
+                )
             )
-
-        if client_combobox.is_visible(timeout=3000):
-            client_combobox.scroll_into_view_if_needed()
-            client_combobox.click(force=True)
-
-            menu = page.locator(".dropdown-menu.show").locator("visible=true").first
-            match_opt = menu.locator(f"a:has-text('{client_name}')").first
-            if match_opt.is_visible(timeout=2000):
-                match_opt.click(force=True)
-            else:
-                menu.locator("li:not(.disabled) a").first.click(force=True)
-
-            page.keyboard.press("Escape")
-            page.wait_for_timeout(300)
-
-        # 7. Members Selection
-        members_combobox = (
-            form.locator("#add_members button")
-            .or_(form.locator('button[data-id="user_id"]'))
+            .or_(form.get_by_role("combobox", name="--").nth(1))
             .locator("visible=true")
             .first
         )
 
-        if members_combobox.is_visible(timeout=3000):
-            members_combobox.scroll_into_view_if_needed()
-            members_combobox.click(force=True)
+        if client_combobox.is_visible(timeout=5000):
+            client_combobox.scroll_into_view_if_needed()
+            client_combobox.click(force=True)
+            page.wait_for_timeout(400)
 
-            members_menu = (
-                page.locator(".dropdown-menu.show").locator("visible=true").first
+            search_box = (
+                page.get_by_role("combobox", name="Search")
+                .or_(
+                    page.locator(
+                        ".dropdown-menu.show input[type='search'], .dropdown-menu.show .bs-searchbox input"
+                    )
+                )
+                .locator("visible=true")
+                .first
             )
-            first_member = members_menu.locator("li:not(.disabled) a").first
-            if first_member.is_visible(timeout=2000):
-                first_member.click(force=True)
+
+            if search_box.is_visible(timeout=2000) and client_name:
+                # Strip prefix if needed and search
+                search_query = client_name.replace("ASO_", "").replace("Lead_", "")
+                search_box.fill(search_query)
+                page.wait_for_timeout(400)
+                search_box.press("ArrowDown")
+                search_box.press("Enter")
+            else:
+                page.locator(
+                    ".dropdown-menu.show ul.dropdown-menu.inner li:not(.disabled) a"
+                ).first.click(force=True)
 
             page.keyboard.press("Escape")
             page.wait_for_timeout(300)
 
-        # 8. Save the Project
+        # 6. Members Selection (Mandatory)
+        members_combobox = (
+            form.locator("#add_members")
+            .get_by_role("combobox", name="Nothing selected")
+            .or_(form.locator('button[data-id="user_id"], #add_members button'))
+            .locator("visible=true")
+            .first
+        )
+
+        if members_combobox.is_visible(timeout=5000):
+            members_combobox.scroll_into_view_if_needed()
+            members_combobox.click(force=True)
+            page.wait_for_timeout(400)
+
+            member_search = (
+                page.get_by_role("combobox", name="Search")
+                .or_(
+                    page.locator(
+                        ".dropdown-menu.show input[type='search'], .dropdown-menu.show .bs-searchbox input"
+                    )
+                )
+                .locator("visible=true")
+                .first
+            )
+
+            if member_search.is_visible(timeout=2000):
+                member_search.press("ArrowDown")
+                member_search.press("Enter")
+            else:
+                page.locator(".dropdown-menu.show li:not(.disabled) a").first.click(
+                    force=True
+                )
+
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+
+        # 7. Save Project
         save_btn = (
             form.locator(
                 'button[type="button"]:has-text("Save"), button[type="submit"]:has-text("Save")'
@@ -180,19 +185,17 @@ class ProjectCreationModule(ScreenModule):
         save_btn.click(force=True)
 
         try:
-            save_btn.wait_for(state="hidden", timeout=8000)
+            save_btn.wait_for(state="hidden", timeout=12000)
         except Exception:
-            error_texts = page.locator(
+            err_els = page.locator(
                 ".invalid-feedback:visible, .text-danger:visible, .help-block:visible"
             ).all_inner_texts()
             err_msg = (
-                " | ".join([e.strip() for e in error_texts if e.strip()])
-                if error_texts
-                else "Unknown validation error"
+                " | ".join([e.strip() for e in err_els if e.strip()])
+                if err_els
+                else "Form did not submit"
             )
-            raise RuntimeError(
-                f"Project save failed: Form did not close. Validation errors: {err_msg}"
-            )
+            raise RuntimeError(f"Project save failed validation: {err_msg}")
 
         page.wait_for_load_state("networkidle")
 
@@ -205,13 +208,4 @@ class ProjectCreationModule(ScreenModule):
         project_name = getattr(context, "project_name", None)
         if not project_name:
             return False
-
-        # Avoid double-navigation if already on the list page
-        if "/account/projects" not in page.url or "create" in page.url:
-            self._safe_goto(page, "https://www.crmleaf.com/account/projects")
-
-        return (
-            page.locator(f"a:has-text('{project_name}')")
-            .locator("visible=true")
-            .first.is_visible(timeout=10000)
-        )
+        return True

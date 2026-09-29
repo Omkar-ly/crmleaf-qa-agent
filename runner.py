@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 
-from core.context import RunContext
+from core.context import AutomationContext
 from core.models import Finding
 from detectors.observer import DOMAndNetworkObserver
 from evidence.collector import EvidenceCollector
@@ -22,6 +22,12 @@ from modules.psa.m08_project import ProjectCreationModule
 from modules.psa.m09_project_overview import ProjectOverviewModule
 from modules.psa.m10_milestones import MilestonesModule
 from modules.psa.m11_tasks import TasksModule
+from modules.psa.m12_task_board import TaskBoardModule
+from modules.psa.m13_timesheet import TimesheetModule
+from modules.psa.m14_expenses import ExpensesModule
+from modules.psa.m15_gantt import GanttChartModule
+from modules.psa.m16_invoice import InvoiceCreationModule
+from modules.psa.m17_payment import PaymentModule
 
 
 class SafeAutonomousEngine:
@@ -41,9 +47,17 @@ class SafeAutonomousEngine:
             ProjectOverviewModule(),
             MilestonesModule(),
             TasksModule(),
+            TaskBoardModule(),
+            TimesheetModule(),
+            ExpensesModule(),
+            GanttChartModule(),
+            InvoiceCreationModule(),
+            PaymentModule(),
         ]
 
-    def _ensure_authenticated_session(self, p, base_url: str):
+    def _ensure_authenticated_session(
+        self, p, base_url: str = "https://www.crmleaf.com"
+    ):
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page = context.new_page()
@@ -51,7 +65,6 @@ class SafeAutonomousEngine:
         login_url = f"{base_url.rstrip('/')}/login"
         page.goto(login_url, wait_until="domcontentloaded", timeout=30000)
 
-        # 1. Fill login credentials
         email_field = page.get_by_role("textbox", name="Email Address")
         if email_field.is_visible(timeout=5000):
             email_field.fill(self.email)
@@ -59,13 +72,11 @@ class SafeAutonomousEngine:
             page.get_by_role("button", name="Log In").click()
             page.wait_for_load_state("domcontentloaded")
 
-        # 2. Workspace selection: Handle 'BDM Industries' if prompted
         workspace_link = page.get_by_role("link", name="BDM Industries")
         if workspace_link.is_visible(timeout=5000):
             workspace_link.click()
             page.wait_for_load_state("networkidle")
 
-        # Ensure dashboard or account area is reached
         page.wait_for_url("**/account/**", timeout=30000)
 
         storage_path = "auth_state.json"
@@ -76,7 +87,7 @@ class SafeAutonomousEngine:
 
     def run(self):
         run_id = f"RUN_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        ctx = RunContext(run_id=run_id)
+        ctx = AutomationContext(run_id=run_id)
         evidence = EvidenceCollector(run_id=run_id)
 
         passed_modules = set()
@@ -84,7 +95,7 @@ class SafeAutonomousEngine:
         blocked_modules = set()
 
         with sync_playwright() as p:
-            auth_path = self._ensure_authenticated_session(p, ctx.base_url)
+            auth_path = self._ensure_authenticated_session(p)
 
             for module in self.pipeline:
                 missing_deps = [
@@ -171,7 +182,7 @@ class SafeAutonomousEngine:
                         screen=module.name,
                         failure_type=failure_type,
                         severity=(
-                            "Critical" if failure_type == "ProductDefect" else "Medium"
+                            "Critical" if failure_type == "ProductDefect" else "Major"
                         ),
                         title=f"{failure_type} in {module.name}",
                         repro_steps=f"1. Authenticate to CRMLeaf.\n2. Execute {module.name} workflow sequence.",
